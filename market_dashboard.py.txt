@@ -1,0 +1,104 @@
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+
+st.title("Nifty Live Market Dashboard & Buy/Sell Signals")
+
+# Input for stock/index symbol
+symbol = st.text_input("Enter Symbol (e.g., ^NSEI for Nifty):", value="^NSEI")
+
+# Fetch latest data on button click
+if st.button("Get Latest Data"):
+    data = yf.download(symbol, period="1mo", interval="15m")
+    
+    if data.empty:
+        st.error("No data found for this symbol.")
+    else:
+        # Calculate Indicators
+        data['MA_5'] = data['Close'].rolling(window=5).mean()
+        data['MA_20'] = data['Close'].rolling(window=20).mean()
+
+        delta = data['Close'].diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        avg_gain = gain.rolling(window=14).mean()
+        avg_loss = loss.rolling(window=14).mean()
+        rs = avg_gain / avg_loss
+        data['RSI'] = 100 - (100 / (1 + rs))
+        ema12 = data['Close'].ewm(span=12, adjust=False).mean()
+        ema26 = data['Close'].ewm(span=26, adjust=False).mean()
+        data['MACD'] = ema12 - ema26
+        data['Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
+
+        # Get latest data point
+        latest = data.iloc[-1]
+        prev = data.iloc[-2]
+
+        # Generate signals
+        signals = []
+
+        # MA Crossover
+        if prev['MA_5'] < prev['MA_20'] and latest['MA_5'] > latest['MA_20']:
+            signals.append("Buy - MA Crossover")
+        elif prev['MA_5'] > prev['MA_20'] and latest['MA_5'] < latest['MA_20']:
+            signals.append("Sell - MA Crossover")
+
+        # RSI
+        if latest['RSI'] < 30:
+            signals.append("Buy - RSI Oversold")
+        elif latest['RSI'] > 70:
+            signals.append("Sell - RSI Overbought")
+
+        # MACD
+        if prev['MACD'] < prev['Signal'] and latest['MACD'] > latest['Signal']:
+            signals.append("Buy - MACD Bullish")
+        elif prev['MACD'] > prev['Signal'] and latest['MACD'] < latest['Signal']:
+            signals.append("Sell - MACD Bearish")
+
+        # Overall Signal
+        if any("Buy" in s for s in signals):
+            overall_signal = "BUY"
+        elif any("Sell" in s for s in signals):
+            overall_signal = "SELL"
+        else:
+            overall_signal = "HOLD"
+
+        # Display Data & Indicators
+        st.subheader(f"Latest Data for {symbol}")
+        st.write(f"Close Price: {latest['Close']:.2f}")
+        st.write(f"Trading Signal: {overall_signal}")
+        st.write("Details of signals:")
+        for s in signals:
+            st.write(f"- {s}")
+
+        # Plot charts
+        st.subheader("Price & Moving Averages")
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots()
+        ax.plot(data.index, data['Close'], label='Close Price')
+        ax.plot(data.index, data['MA_5'], label='MA 5')
+        ax.plot(data.index, data['MA_20'], label='MA 20')
+        ax.set_xlabel('Date')
+        ax.set_ylabel('Price')
+        ax.legend()
+        st.pyplot(fig)
+
+        st.subheader("RSI & MACD")
+        fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=(10,8))
+
+        # RSI
+        ax1.plot(data.index, data['RSI'], label='RSI')
+        ax1.axhline(70, color='red', linestyle='--')
+        ax1.axhline(30, color='green', linestyle='--')
+        ax1.set_title('RSI')
+        ax1.legend()
+
+        # MACD
+        ax2.plot(data.index, data['MACD'], label='MACD')
+        ax2.plot(data.index, data['Signal'], label='Signal')
+        ax2.axhline(0, color='black', linestyle='--')
+        ax2.set_title('MACD')
+        ax2.legend()
+
+        st.pyplot(fig2)
